@@ -6,12 +6,15 @@ from scipy.stats import norm
 class PortfolioRiskEngine:
     def __init__(self, tickers: list, weights: list, initial_portfolio_value: float = 1000000.0):
         if not np.isclose(sum(weights), 1.0):
-            raise ValueError("Weights must sum to 1.0.")
+            raise ValueError("Portfolio allocations matrix weights must sum precisely to 1.0.")
+        if len(tickers) != len(weights):
+            raise ValueError("The dimensions of tickers list and weights array allocation must match.")
         self.tickers = tickers
         self.weights = np.array(weights)
         self.initial_portfolio_value = initial_portfolio_value
         self.asset_returns = pd.DataFrame()
         self.covariance_matrix = pd.DataFrame()
+        self.correlation_matrix = pd.DataFrame()
         self.mean_returns = pd.Series(dtype=float)
         self.metrics_dashboard = {}
 
@@ -22,14 +25,16 @@ class PortfolioRiskEngine:
             asset_obj = yf.Ticker(ticker)
             df = asset_obj.history(start=start_date, end=end_date)
             if df.empty:
-                raise ValueError(f"No data for {ticker}")
+                raise ValueError(f"Ingestion Error: Market feed for {ticker} returned no data intervals.")
             price_data[ticker] = df['Close'].astype(float)
         combined_df = pd.DataFrame(price_data).ffill().bfill()
         self.asset_returns = np.log(combined_df / combined_df.shift(1)).dropna()
         self.mean_returns = self.asset_returns.mean()
         self.covariance_matrix = self.asset_returns.cov()
+        self.correlation_matrix = self.asset_returns.corr()
+        print(f"Data layer synchronized. Processed {len(self.asset_returns)} historical market intervals.")
 
-    def calculate_parametric_risk(self, confidence_level: float = 0.99, horizon: int = 1):
+    def calculate_parametric_risk(self, confidence_level: float = 0.99, horizon: int = 1) -> dict:
         portfolio_variance = np.dot(self.weights.T, np.dot(self.covariance_matrix.values, self.weights))
         portfolio_volatility = np.sqrt(portfolio_variance)
         portfolio_expected_return = np.dot(self.weights, self.mean_returns)
@@ -41,7 +46,7 @@ class PortfolioRiskEngine:
         cvar_pct = (alpha**-1 * norm.pdf(z_score) * scaled_sigma) - scaled_mu
         return {"VaR_Nominal": var_pct * self.initial_portfolio_value, "CVaR_Nominal": cvar_pct * self.initial_portfolio_value}
 
-    def calculate_historical_risk(self, confidence_level: float = 0.99, horizon: int = 1):
+    def calculate_historical_risk(self, confidence_level: float = 0.99, horizon: int = 1) -> dict:
         portfolio_hist_returns = self.asset_returns.dot(self.weights)
         if horizon > 1:
             portfolio_hist_returns = portfolio_hist_returns.rolling(window=horizon).sum().dropna()
@@ -51,7 +56,7 @@ class PortfolioRiskEngine:
         cvar_pct = -tail_losses.mean() if len(tail_losses) > 0 else var_pct
         return {"VaR_Nominal": var_pct * self.initial_portfolio_value, "CVaR_Nominal": cvar_pct * self.initial_portfolio_value}
 
-    def run_multivariate_monte_carlo(self, simulations: int = 50000, horizon: int = 1, confidence_level: float = 0.99, seed: int = 42):
+    def run_multivariate_monte_carlo(self, simulations: int = 50000, horizon: int = 1, confidence_level: float = 0.99, seed: int = 42) -> dict:
         np.random.seed(seed)
         num_assets = len(self.tickers)
         sigma_matrix = self.covariance_matrix.values
@@ -90,12 +95,25 @@ class PortfolioRiskEngine:
         print("=" * 80)
         print("     INSTITUTIONAL MULTI-ASSET FINANCIAL RISK EXPOSURE ASSESSMENT MODEL ")
         print("=" * 80)
+        print("Asset Class Allocation Distribution Weights Matrix:")
+        for asset, weight in zip(self.tickers, self.weights):
+            print(f"  • Asset Ticker Class Symbol: {asset:<10} | Target Portfolio Allocation: {weight*100:.2f}%")
         print(f"Total Portfolio Capital Under Valuation Base: ${self.initial_portfolio_value:,.2f}")
         print("-" * 80)
+        print(f"Risk Window Evaluation Baseline Configurations:")
+        print(f"  Target Confidence Threshold Boundary: {self.metrics_dashboard['Confidence Bounds Interval']}")
+        print(f"  Target Temporal Volatility Horizon  : {self.metrics_dashboard['Temporal Holding Horizon']}")
+        print("-" * 80)
         print("Cross-Paradigm Tail Value at Risk (VaR) & Expected Shortfall (CVaR) Breakdown:")
-        print(f"  [1] Parametric VaR: {self.metrics_dashboard['Parametric VaR ($)']} | CVaR: {self.metrics_dashboard['Parametric CVaR ($)']}")
-        print(f"  [2] Historical VaR: {self.metrics_dashboard['Historical VaR ($)']} | CVaR: {self.metrics_dashboard['Historical CVaR ($)']}")
-        print(f"  [3] Monte Carlo VaR: {self.metrics_dashboard['Monte Carlo VaR ($)']} | CVaR: {self.metrics_dashboard['Monte Carlo CVaR ($)']}")
+        print("  [1] Parametric (Variance-Covariance) Framework Matrix:")
+        print(f"      Value at Risk (VaR Floor)       : {self.metrics_dashboard['Parametric VaR ($)']}")
+        print(f"      Expected Shortfall Tail Vector  : {self.metrics_dashboard['Parametric CVaR ($)']}")
+        print("  [2] Empirical Historical Simulation Framework Matrix:")
+        print(f"      Value at Risk (VaR Floor)       : {self.metrics_dashboard['Historical VaR ($)']}")
+        print(f"      Expected Shortfall Tail Vector  : {self.metrics_dashboard['Historical CVaR ($)']}")
+        print("  [3] Correlated Multivariate Monte Carlo Simulation (N=50,000 Paths):")
+        print(f"      Value at Risk (VaR Floor)       : {self.metrics_dashboard['Monte Carlo VaR ($)']}")
+        print(f"      Expected Shortfall Tail Vector  : {self.metrics_dashboard['Monte Carlo CVaR ($)']}")
         print("=" * 80)
 
 if __name__ == "__main__":
